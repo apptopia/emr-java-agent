@@ -9,7 +9,7 @@ public final class AddRequireToClinitMethodVisitor extends MethodVisitor {
     private final String className;
     private final int version;
 
-    AddRequireToClinitMethodVisitor(int api, MethodVisitor methodVisitor, String className, int version) {
+    public AddRequireToClinitMethodVisitor(int api, MethodVisitor methodVisitor, String className, int version) {
         super(api, methodVisitor);
         this.className = className;
         this.version = version;

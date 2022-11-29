@@ -17,7 +17,7 @@ public final class AddRequireToClinitClassVisitor extends ClassVisitor {
 
     private boolean visitedStaticBlock = false;
 
-    AddRequireToClinitClassVisitor(int api, ClassVisitor visitor, ClassLoader loader) {
+    public AddRequireToClinitClassVisitor(int api, ClassVisitor visitor, ClassLoader loader) {
         super(api, visitor);
         this.loader = loader;
     }
