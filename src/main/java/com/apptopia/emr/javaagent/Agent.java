@@ -11,6 +11,8 @@ import java.security.ProtectionDomain;
 import static org.objectweb.asm.Opcodes.ASM5;
 
 public final class Agent {
+    public static final boolean DEBUG_EMR_JAVA_AGENT = System.getenv("DEBUG_EMR_JAVA_AGENT") != null;
+
     public static void premain(String args, Instrumentation instrumentation) {
         instrumentation.addTransformer(new RequireInClinitTransformer());
     }

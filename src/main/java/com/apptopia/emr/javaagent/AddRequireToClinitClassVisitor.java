@@ -31,9 +31,9 @@ public final class AddRequireToClinitClassVisitor extends ClassVisitor {
         skip = getResource(loader, scriptBase + "__init.class") == null
                 && getResource(loader, scriptBase + ".clj") == null
                 && getResource(loader, scriptBase + ".cljc") == null;
-//        if (!skip) {
-//            System.out.println("!!!: " + name + "(" + version + ")");
-//        }
+        if (!skip && Agent.DEBUG_EMR_JAVA_AGENT) {
+            System.err.println("!!!: " + name + "(" + version + ")");
+        }
     }
 
     @Override

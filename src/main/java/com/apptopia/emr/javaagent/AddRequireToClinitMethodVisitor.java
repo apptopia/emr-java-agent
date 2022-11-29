@@ -44,8 +44,11 @@ public final class AddRequireToClinitMethodVisitor extends MethodVisitor {
         if (stackFramesEnabled()) {
             super.visitFrame(F_FULL, 0, new Object[]{}, 1, new Object[]{"java/lang/Exception"});
         }
-//        super.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "printStackTrace", "()V", false);
-        super.visitInsn(POP);
+        if (Agent.DEBUG_EMR_JAVA_AGENT) {
+            super.visitMethodInsn(INVOKEVIRTUAL, "java/lang/Throwable", "printStackTrace", "()V", false);
+        } else {
+            super.visitInsn(POP);
+        }
 
         super.visitLabel(end);
         if (stackFramesEnabled()) {
