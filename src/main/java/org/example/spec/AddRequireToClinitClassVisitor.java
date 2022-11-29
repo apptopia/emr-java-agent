@@ -5,7 +5,6 @@ import org.objectweb.asm.MethodVisitor;
 
 import java.net.URL;
 
-import static clojure.lang.RT.LOADER_SUFFIX;
 import static org.objectweb.asm.Opcodes.ACC_STATIC;
 import static org.objectweb.asm.Opcodes.RETURN;
 
@@ -29,7 +28,7 @@ public final class AddRequireToClinitClassVisitor extends ClassVisitor {
         this.className = name;
         this.version = version;
         String scriptBase = className.split("\\$")[0];
-        skip = getResource(loader, scriptBase + LOADER_SUFFIX + ".class") == null
+        skip = getResource(loader, scriptBase + "__init.class") == null
                 && getResource(loader, scriptBase + ".clj") == null
                 && getResource(loader, scriptBase + ".cljc") == null;
 //        if (!skip) {
@@ -60,7 +59,7 @@ public final class AddRequireToClinitClassVisitor extends ClassVisitor {
         super.visitEnd();
     }
 
-    static public URL getResource(ClassLoader loader, String name){
+    static public URL getResource(ClassLoader loader, String name) {
         if (loader == null) {
             return ClassLoader.getSystemResource(name);
         } else {
