@@ -42,7 +42,7 @@
                             <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
                         </manifest>
                         <manifestEntries>
-                            <Premain-Class>org.example.spec.Agent</Premain-Class>
+                            <Premain-Class>com.apptopia.emr.javaagent.Agent</Premain-Class>
                         </manifestEntries>
                     </archive>
                 </configuration>

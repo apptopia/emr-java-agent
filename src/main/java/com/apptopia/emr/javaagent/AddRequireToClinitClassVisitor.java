@@ -1,4 +1,4 @@
-package org.example.spec;
+package com.apptopia.emr.javaagent;
 
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;

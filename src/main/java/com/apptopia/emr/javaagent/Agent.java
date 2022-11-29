@@ -1,4 +1,4 @@
-package org.example.spec;
+package com.apptopia.emr.javaagent;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -23,9 +23,6 @@ public final class Agent {
                     return classfileBuffer;
                 }
                 if (loader.getResource("clojure/lang/RT.class") == null) {
-                    return classfileBuffer;
-                }
-                if (className != null && className.startsWith("org/example/spec/")) {
                     return classfileBuffer;
                 }
                 if (className != null && className.startsWith("clojure/lang/")) {
