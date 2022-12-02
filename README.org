@@ -1,4 +1,151 @@
-Usage:
-#+BEGIN_SRC shell-script
-java -javaagent:emr-java-agent-1.0-SNAPSHOT-jar-with-dependencies.jar ...
+* EMR Java Agent
+
+This package can be used to solve the following issue (e.g. in Spark executors):
+
+#+BEGIN_SRC
+java.lang.IllegalStateException: Attempting to call unbound fn: #'xxx/fn1
+	at clojure.lang.Var$Unbound.throwArity(Var.java:45)
+	at clojure.lang.AFn.invoke(AFn.java:32)
+	at xxx$fn2.invokeStatic(xxx.clj:7)
+	at xxx$fn2.invoke(xxx.clj:6)
+	at ...
 #+END_SRC
+
+To use it: add the following option to the list of JVM options (changing the path accordingly):
+
+#+BEGIN_SRC shell-script
+-javaagent:/path/to/emr-java-agent-1.0-SNAPSHOT-jar-with-dependencies.jar
+#+END_SRC
+
+* The problem
+
+Suppose we have the following namespace in the application:
+
+#+BEGIN_SRC clojure
+(ns xxx)
+
+(defn fn1 [x]
+  (+ x 1))
+
+(defn fn2 [x]
+  (fn1 x))
+#+END_SRC
+
+and we want to map an RDD using ~fn2~:
+
+#+BEGIN_SRC clojure
+(->> (reify org.apache.spark.api.java.function.Function
+       (call [_ item]
+         (fn2 item)))
+     (.map rdd))
+#+END_SRC
+
+When we execute the job, however, the ~map~ task will fail upon ~fn2~ trying to invoke ~fn1~:
+
+#+BEGIN_SRC
+java.lang.IllegalStateException: Attempting to call unbound fn: #'xxx/fn1
+	at clojure.lang.Var$Unbound.throwArity(Var.java:45)
+	at clojure.lang.AFn.invoke(AFn.java:32)
+	at xxx$fn2.invokeStatic(xxx.clj:7)
+	at xxx$fn2.invoke(xxx.clj:6)
+	at ...
+#+END_SRC
+
+Let's take a look the code of ~fn2~ to understand how exactly it calls ~fn1~:
+
+#+BEGIN_SRC
+public final class xxx$fn2 extends clojure.lang.AFunction {
+  public static final clojure.lang.Var const__0;
+
+  public static java.lang.Object invokeStatic(java.lang.Object arg);
+    Code:
+          // return ((IFn) const__0.getRawRoot()).invoke(arg);
+       0: getstatic     #15                 // Field const__0:Lclojure/lang/Var;
+       3: invokevirtual #21                 // Method clojure/lang/Var.getRawRoot:()Ljava/lang/Object;
+       6: checkcast     #23                 // class clojure/lang/IFn
+       9: aload_0
+          ...
+      12: invokeinterface #26,  2           // InterfaceMethod clojure/lang/IFn.invoke:(Ljava/lang/Object;)Ljava/lang/Object;
+      17: areturn
+
+  public java.lang.Object invoke(java.lang.Object arg);
+    Code:
+          // return invokeStatic(arg);
+       0: aload_1
+          ...
+       3: invokestatic  #30                 // Method invokeStatic:(Ljava/lang/Object;)Ljava/lang/Object;
+       6: areturn
+
+  public static {};
+    Code:
+          // const__0 = clojure.lang.RT.var("xxx", "fn1");
+       0: ldc           #33                 // String xxx
+       2: ldc           #35                 // String fn1
+       4: invokestatic  #41                 // Method clojure/lang/RT.var:(Ljava/lang/String;Ljava/lang/String;)Lclojure/lang/Var;
+       7: checkcast     #17                 // class clojure/lang/Var
+      10: putstatic     #15                 // Field const__0:Lclojure/lang/Var;
+      13: return
+}
+#+END_SRC
+
+As we can see, there is no direct reference to ~xxx$fn1~ (which is the class for ~fn1~) anywhere. Instead it accesses ~fn1~ using the ~#'xxx/fn1~ var. But this var is unbound, thus causing the "Attempting to call unbound fn" exception when invoking its value.
+
+All the vars in a namespace get initialized when the namespace is loaded. For example, below is the stripped-down version of the initialization class for the namespace ~xxx~. Notice how ~load()~ binds ~#'xxx/fn1~ to the actual function.
+
+#+BEGIN_SRC
+public class xxx__init {
+  ...
+  public static final clojure.lang.Var const__3;
+  ...
+
+  public static void load();
+    Code:
+          ...
+          // const__3.bindRoot(new xxx$fn1());
+      67: getstatic     #56                 // Field const__3:Lclojure/lang/Var;
+          ...
+      81: new           #67                 // class xxx$fn1
+      84: dup
+      85: invokespecial #68                 // Method xxx$fn1."<init>":()V
+      88: invokevirtual #72                 // Method clojure/lang/Var.bindRoot:(Ljava/lang/Object;)V
+          ...
+
+  public static void __init0();
+    Code:
+          ...
+          // const__3 = clojure.lang.RT.var("xxx", "fn1");
+      37: ldc           #96                 // String xxx
+      39: ldc           #104                // String fn1
+      41: invokestatic  #94                 // Method clojure/lang/RT.var:(Ljava/lang/String;Ljava/lang/String;)Lclojure/lang/Var;
+      44: checkcast     #12                 // class clojure/lang/Var
+      47: putstatic     #56                 // Field const__3:Lclojure/lang/Var;
+          ...
+
+  public static {};
+    Code:
+          // __init0();
+       0: invokestatic  #152                // Method __init0:()V
+          ...
+          // load();
+      14: invokestatic  #171                // Method load:()V
+          ...
+}
+#+END_SRC
+
+When a spark driver sends a task to a spark executor, it simply serializes everything related to the task, including the function to be executed. So since the function itself doesn't load the namespace it belongs to, neither does the executor. We can easily replicate the same behavior by invoking ~fn2~ when the namespace ~xxx~ is not loaded:
+
+#+BEGIN_SRC
+repl> (.invoke (xxx$fn2.) 5)
+Execution error (IllegalStateException) at xxx/fn2 (xxx.clj:7).
+Attempting to call unbound fn: #'xxx/fn1
+#+END_SRC
+
+* A solution
+
+There are many different solutions for this problem: using [[https://clojure.org/reference/compilation#directlinking][direct linking]], loading specific namespaces on executor start-up, adding 'requires' to the tasks themselves, etc. This package solves the problem by forcing namespace loading when a class belonging to a namespace is loaded. Essentially, it adds the following line to the beginning of the static init block of every class that belongs to some namespace:
+
+#+BEGIN_SRC clojure
+(require '<namespace-of-the-class>)
+#+END_SRC
+
+This way all that needs to be done to use this solution is a small change in the executor's configuration.
