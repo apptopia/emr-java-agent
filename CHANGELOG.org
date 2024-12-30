@@ -1,0 +1,114 @@
+* Changelog
+
+** [1.1] - 2024-12-30
+
+This release fixes an issues discovered in Gargamel related to concurrent ~require~ calls, by using thread-safe requires and only calling require when the namespace to be loaded is not the same as the one being loaded right now.
+
+In Gargamel's case, the same namespace was required in a [[https://github.com/apptopia/gargamel/blob/b7993f31a1e5698de163330d648d0e248baa7eb1/src/gargamel/spark/serialization.clj#L17][custom kryo registrator]] that was called from different threads by Spark during task deserialization. The exception was as following:
+#+BEGIN_SRC
+org.apache.spark.SparkException: Failed to register classes with Kryo
+	at org.apache.spark.serializer.KryoSerializer.$anonfun$newKryo$5(KryoSerializer.scala:186) ~[spark-core_2.12-3.4.1-amzn-2.jar:3.4.1-amzn-2]
+    ...
+	at org.apache.spark.serializer.KryoSerializerInstance.deserializeStream(KryoSerializer.scala:442) ~[spark-core_2.12-3.4.1-amzn-2.jar:3.4.1-amzn-2]
+    ...
+	at java.io.ObjectInputStream.readObject(ObjectInputStream.java:461) ~[?:1.8.0_432]
+	at org.apache.spark.serializer.JavaDeserializationStream.readObject(JavaSerializer.scala:87) ~[spark-core_2.12-3.4.1-amzn-2.jar:3.4.1-amzn-2]
+	at org.apache.spark.serializer.JavaSerializerInstance.deserialize(JavaSerializer.scala:129) ~[spark-core_2.12-3.4.1-amzn-2.jar:3.4.1-amzn-2]
+	at org.apache.spark.executor.Executor$TaskRunner.run(Executor.scala:522) ~[spark-core_2.12-3.4.1-amzn-2.jar:3.4.1-amzn-2]
+	at java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1149) ~[?:1.8.0_432]
+	at java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:624) ~[?:1.8.0_432]
+	at java.lang.Thread.run(Thread.java:750) ~[?:1.8.0_432]
+Caused by: java.lang.RuntimeException: Failed to register kryo!
+	at gargamel.spark.serialization.GargamelKryoRegistrator.registerClasses(serialization.clj:27) ~[gargamel-emr.jar:?]
+    ...
+Caused by: java.lang.IllegalStateException: Attempting to call unbound fn: #'gargamel.spark.serialization/register-gargamel
+	at clojure.lang.Var$Unbound.throwArity(Var.java:47) ~[gargamel-emr.jar:?]
+	at clojure.lang.AFn.invoke(AFn.java:32) ~[gargamel-emr.jar:?]
+	at gargamel.spark.serialization.GargamelKryoRegistrator.registerClasses(serialization.clj:24) ~[gargamel-emr.jar:?]
+	...
+#+END_SRC
+
+The core of the problem was that while the ~gargamel.spark.serialization~ namespace was beeing loaded the code added by the agent would try to ~require~ the same namespace again. While such requires didn't cause the namespace to be loaded the namespace was still marked as 'loaded' long before it was actually fully loaded. This made other threads loading the same namespace to skip the loading step and go straight to the execution of the code depending on that namespace causing "Attempting to call unbound fn" exception.
+
+Details:
+
+Clojure keeps a list of the loaded namespaces (~clojure.core/*loaded-libs*~). Trying to load a namespace that is already present in that list will not actually load the namespace unless ~:reload~ or ~:reload-all~ option is specified.
+
+In addition, Clojure keeps track of the nesting while loading (in particular to detect circular dependencies) by maintaining a stack of the namespaces being loaded in ~clojure.core/*pending-paths*~. Trying to load the same namespace as the top one (e.g. if the namespace tries to load itself) won't cause an error, but the namespace will be added to ~clojure.core/*loaded-libs*~.
+
+The agent adds a require of the owning namespace to the static init blocks of all the classes that potentially belong to a namespace. And while a namespace is being loaded, it references the classes that belong to it causing their static init blocks to be executed. In turn, this causes the agent-generated requires to be executed leading to the situation describe above.
+
+To reproduce this locally, two namespaces are needed.
+
+The one that will be required concurrently:
+#+BEGIN_SRC clojure
+(print "1")
+
+(ns required)
+
+;; In the real code this delay was caused by the loading of all the dependencies.
+(Thread/sleep 2)
+
+(print "2")
+
+(defn fff []
+  1)
+
+(print "3")
+#+END_SRC
+
+The namespace that will execute the requires:
+#+BEGIN_SRC clojure
+(ns requires
+  (:import (java.util.concurrent Executors)))
+
+(defn run-test [nthreads]
+  (let [pool  (Executors/newFixedThreadPool nthreads)
+        tasks (map (fn [_t]
+                     (fn []
+                       (require '[required])
+                       (when (@#'clojure.core/*loaded-libs* 'required)
+                         (print "!"))
+                       (if (bound? (intern 'required 'fff))
+                         (print "B")
+                         (print "U"))))
+                   (range nthreads))]
+    (doseq [future (.invokeAll pool tasks)]
+      (.get future))
+    (.shutdown pool))
+  (println "")
+  (flush)
+  nil)
+#+END_SRC
+
+Running the test in a clean repl (~required~ namespace must not be loaded) will cause ~required~ namespace to be loaded concurrently. In my testing 64 threads was enough to reproduce the issue. Depending on the hardware a longer delay or more threads might be required:
+#+BEGIN_SRC
+requires> (test-stm 64)
+1!!!!UUUU!U!U!U!U23!!BB!B!!B!!BBB!!!B!BB!B!BB!!BB!!!!BB!B!B!B!BB!!B!BBB!B!B!!!BBB!B!!!BB!BB!!B!!B!B!!!BB!!BB!!!BBB!!BBBB!BB!!B!BB!B
+nil
+#+END_SRC
+
+The output shows that some threads tried to access ~fff~ while it was undefined (character ~U~ in the output) before it was bound (character ~3~ in the output).
+
+Changing the agent to only require the namespace when it's not being loaded helps with this problem, but doesn't actually solve it. Agent caused the namespace to be added to the list of the loaded namespaces earlier, but even without the agent ~ns~ addes the namespace to the list when the ~ns~ form is done executing, but before all the other code is done executing. Here is a macroexpand of the ~required~ ns form:
+
+#+BEGIN_SRC clojure
+(do
+  (in-ns 'gargamel.spark.required)
+  (with-loading-context (refer 'clojure.core))
+  (when-not (.equals 'gargamel.spark.required 'clojure.core)
+    (dosync
+     (commute @#'clojure.core/*loaded-libs* conj 'gargamel.spark.required)))
+  nil)
+#+END_SRC
+
+So it's actually possible to reproduce this issue without the agent by increasing the delay in the test case.
+
+The proper solution would be to refactor the way requires work in Clojure, but unfortunately it doesn't seem to be a priority:
+https://clojure.atlassian.net/browse/CLJ-1876.
+
+For now, wraping all the manual requires in ~locking~ is the simplest solution.
+
+** [1.0] - 2022-12-06
+
+Initial release
