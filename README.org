@@ -31,7 +31,7 @@ By default [[https://github.com/apptopia/apptopia.emr][apptopia.emr]] uses the f
 
 #+BEGIN_SRC shell
 mvn clean package
-aws s3 cp 'target/emr-java-agent-1.1.jar' 's3://apptopia-emr/emr-java-agent-17-jars/emr-java-agent.jar'
+aws s3 cp 'target/emr-java-agent-1.1.jar' 's3://apptopia-emr/emr-java-17-agent-jars/emr-java-agent.jar'
 #+END_SRC
 
 ** Debugging
