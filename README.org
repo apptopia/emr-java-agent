@@ -30,8 +30,8 @@ Make sure to replace ~/path/to/emr-java-agent-1.0-SNAPSHOT.jar~ with the actual 
 By default [[https://github.com/apptopia/apptopia.emr][apptopia.emr]] uses the following jar located in S3: ~s3://apptopia-emr/emr-java-agent-jars/emr-java-agent.jar~. You can use the following commands to deploy the agent to that location:
 
 #+BEGIN_SRC shell
-maven clean package
-aws s3 cp 'target/emr-java-agent-1.0-SNAPSHOT.jar' 's3://apptopia-emr/emr-java-agent-jars/emr-java-agent.jar'
+mvn clean package
+aws s3 cp 'target/emr-java-agent-1.1.jar' 's3://apptopia-emr/emr-java-17-agent-jars/emr-java-agent.jar'
 #+END_SRC
 
 ** Debugging

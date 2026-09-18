@@ -8,7 +8,7 @@ import java.lang.instrument.IllegalClassFormatException;
 import java.lang.instrument.Instrumentation;
 import java.security.ProtectionDomain;
 
-import static org.objectweb.asm.Opcodes.ASM5;
+import static org.objectweb.asm.Opcodes.ASM9;
 
 public final class Agent {
     public static final boolean DEBUG_EMR_JAVA_AGENT = System.getenv("DEBUG_EMR_JAVA_AGENT") != null;
@@ -33,7 +33,7 @@ public final class Agent {
 
                 ClassReader reader = new ClassReader(classfileBuffer);
                 ClassWriter writer = new ClassWriter(0);
-                reader.accept(new AddRequireToClinitClassVisitor(ASM5, writer, loader), 0);
+                reader.accept(new AddRequireToClinitClassVisitor(ASM9, writer, loader), 0);
                 return writer.toByteArray();
             } catch (Throwable e) {
                 e.printStackTrace();
